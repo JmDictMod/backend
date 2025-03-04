@@ -3,7 +3,6 @@ const fs = require("fs");
 const path = require("path");
 const cors = require("cors");
 const app = express();
-const PORT = 5000;
 app.use(cors());
 app.use(express.json()); // Allow JSON requests
 // Store loaded data
@@ -23,15 +22,17 @@ function loadJSON(filePath) {
 // Load all JSON data
 function loadData() {
     console.log("Loading JMdict data...");
+    // Get correct path for Vercel (use process.cwd())
+    const dataPath = path.join(process.cwd(), "data");
     // Load Part-of-Speech (POS) and extra tags
-    const tagJson = loadJSON(path.join(__dirname, "data", "tag_bank_1.json"));
+    const tagJson = loadJSON(path.join(dataPath, "tag_bank_1.json"));
     if (tagJson) {
         tagJson.forEach(tag => {
             tagData[tag[0]] = tag[3]; // Store tag descriptions
         });
     }
-    // Load furigana dictionary (supports multiple readings)
-    const furiganaJson = loadJSON(path.join(__dirname, "data", "furigana.json"));
+    // Load furigana dictionary
+    const furiganaJson = loadJSON(path.join(dataPath, "furigana.json"));
     if (furiganaJson) {
         furiganaJson.forEach(entry => {
             if (!furiganaData[entry.text]) {
@@ -42,7 +43,7 @@ function loadData() {
     }
     // Load dictionary data (term_bank_1.json to term_bank_29.json)
     for (let i = 1; i <= 29; i++) {
-        const filePath = path.join(__dirname, "data", `term_bank_${i}.json`);
+        const filePath = path.join(dataPath, `term_bank_${i}.json`);
         const termData = loadJSON(filePath);
         if (termData) {
             dictionaryData = dictionaryData.concat(termData);
@@ -56,47 +57,34 @@ loadData();
 function findFurigana(term, reading) {
     if (furiganaData[term]) {
         const furiganaEntry = furiganaData[term].find(f => f.reading === reading);
-        if (furiganaEntry) {
-            return furiganaEntry.furigana; // Return only the furigana array
-        }
+        return furiganaEntry ? furiganaEntry.furigana : null;
     }
     return null;
 }
-// Function to extract and map tags from posRaw and extraRaw
+// Function to extract and map tags
 function getTagDescriptions(posRaw, extraRaw) {
     const tags = [];
-    // Split posRaw and extraRaw into individual tags
     const posTags = posRaw ? posRaw.split(" ") : [];
     const extraTags = extraRaw ? extraRaw.split(" ") : [];
-    // Map each tag to its description (if found in tagData)
     posTags.forEach(tag => {
-        if (tagData[tag]) {
-            tags.push({ tag, description: tagData[tag] });
-        }
+        if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
     });
     extraTags.forEach(tag => {
-        if (tagData[tag]) {
-            tags.push({ tag, description: tagData[tag] });
-        }
+        if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
     });
     return tags;
 }
 // API endpoint: Search dictionary with furigana support
 app.get("/api/search", (req, res) => {
     const { query, mode } = req.query;
-    if (!query) {
-        return res.status(400).json({ error: "Query parameter is required" });
-    }
+    if (!query) return res.status(400).json({ error: "Query parameter is required" });
     let searchTerm = query;
     let tagFilter = null;
     let tagOnlySearch = false;
-    // Check if the query is for a tag-only search
     if (query.startsWith("#")) {
         tagFilter = query.substring(1).trim();
         tagOnlySearch = true;
-    } 
-    // Check if the query contains a tag filter
-    else if (query.includes(" #")) {
+    } else if (query.includes(" #")) {
         const parts = query.split(" #");
         searchTerm = parts[0].trim();
         tagFilter = parts[1].trim();
@@ -129,7 +117,7 @@ app.get("/api/search", (req, res) => {
     });
     let groupedResults = {};
     results.forEach(entry => {
-        let termKey = `${entry[0]}_${entry[1]}`; // Unique key based on term + reading
+        let termKey = `${entry[0]}_${entry[1]}`;
         if (!groupedResults[termKey]) {
             const tags = getTagDescriptions(entry[2], entry[7]);
             groupedResults[termKey] = {
@@ -142,15 +130,14 @@ app.get("/api/search", (req, res) => {
         }
         groupedResults[termKey].meanings.push(...entry[5]);
     });
-    const finalResults = Object.values(groupedResults);
-    // Prepare the response
-    const response = {
-        totalResults: finalResults.length,
-        results: finalResults
-    };
-    res.json(response);
+    res.json({
+        totalResults: Object.values(groupedResults).length,
+        results: Object.values(groupedResults)
+    });
 });
-// Start server
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+// Define an example API endpoint
+app.get("/api/test", (req, res) => {
+    res.json({ message: "Server is working on Vercel!" });
 });
+// Export the app (Important for Vercel)
+module.exports = app;
