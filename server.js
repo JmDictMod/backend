@@ -110,7 +110,7 @@ app.get("/api/search", (req, res) => {
     let tagOnlySearch = false;
     
     const trimmedQuery = query.trim();
-    if (trimmedQuery === "#" || trimmedQuery.startsWith("# ") || trimmedQuery.startsWith("#  ")) {
+    if (trimmedQuery === "#" || trimmedQuery.startsWith("# ") || trimmedQuery.startsWith(" #")) {
         tagOnlySearch = true;
         tagFilter = trimmedQuery.substring(1).trim() || null;
     } else if (trimmedQuery.startsWith("#")) {
