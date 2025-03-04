@@ -71,17 +71,19 @@ function findFurigana(term, reading) {
     return null;
 }
 
-// Function to extract and map tags
+// Function to extract and map tags (simplified to check presence)
 function getTagDescriptions(posRaw, extraRaw) {
     const tags = [];
-    const posTags = posRaw ? posRaw.split(" ") : [];
-    const extraTags = extraRaw ? extraRaw.split(" ") : [];
-    posTags.forEach(tag => {
-        if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
-    });
-    extraTags.forEach(tag => {
-        if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
-    });
+    if (posRaw && posRaw.trim()) {
+        posRaw.split(" ").forEach(tag => {
+            if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
+        });
+    }
+    if (extraRaw && extraRaw.trim()) {
+        extraRaw.split(" ").forEach(tag => {
+            if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
+        });
+    }
     return tags;
 }
 
@@ -126,11 +128,11 @@ app.get("/api/search", (req, res) => {
     
     if (tagOnlySearch) {
         if (!tagFilter) {
-            // Search for all tags and collect matching dictionary entries
-            const allTags = getAllTags().map(tag => tag.tag);
+            // Return entries where entry[2] (POS) or entry[7] (extra tags) has content
             results = dictionaryData.filter(entry => {
-                const tags = getTagDescriptions(entry[2], entry[7]);
-                return tags.some(tag => allTags.includes(tag.tag));
+                const hasPos = entry[2] && entry[2].trim().length > 0;
+                const hasExtraTags = entry[7] && entry[7].trim().length > 0;
+                return hasPos || hasExtraTags;
             });
         } else {
             // Filter by specific tag when tagFilter is provided (e.g., "#noun")
