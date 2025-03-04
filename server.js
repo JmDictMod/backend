@@ -126,15 +126,8 @@ app.get("/api/search", (req, res) => {
     
     if (tagOnlySearch) {
         if (!tagFilter) {
-            // Iterate through all tags in tagData and collect results for each
-            const allTags = getAllTags();
-            allTags.forEach(tag => {
-                const tagResults = dictionaryData.filter(entry => {
-                    const tags = getTagDescriptions(entry[2], entry[7]);
-                    return tags.some(t => t.tag === tag.tag);
-                });
-                results = results.concat(tagResults);
-            });
+            // Return the entire dictionaryData when query is just "#"
+            results = dictionaryData;
         } else {
             // Filter by specific tag
             results = dictionaryData.filter(entry => {
