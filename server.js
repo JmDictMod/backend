@@ -81,11 +81,17 @@ app.get("/api/search", (req, res) => {
     let searchTerm = query;
     let tagFilter = null;
     let tagOnlySearch = false;
-    if (query.startsWith("#")) {
-        tagFilter = query.substring(1).trim();
+    // Trim the query to handle leading/trailing spaces
+    const trimmedQuery = query.trim();
+    // Check if query is just "#" or has "#  " with spaces
+    if (trimmedQuery === "#" || trimmedQuery.startsWith("# ") || trimmedQuery.startsWith("#  ")) {
         tagOnlySearch = true;
-    } else if (query.includes(" #")) {
-        const parts = query.split(" #");
+        tagFilter = trimmedQuery.substring(1).trim() || null;  // If just "#", tagFilter will be null
+    } else if (trimmedQuery.startsWith("#")) {
+        tagFilter = trimmedQuery.substring(1).trim();
+        tagOnlySearch = true;
+    } else if (trimmedQuery.includes(" #")) {
+        const parts = trimmedQuery.split(" #");
         searchTerm = parts[0].trim();
         tagFilter = parts[1].trim();
     }
@@ -93,6 +99,8 @@ app.get("/api/search", (req, res) => {
         let termMatches = false;
         let meanings = entry[5] || [];
         if (tagOnlySearch) {
+            // If tagFilter is null (from just "#"), return all entries
+            if (!tagFilter) return true;
             const tags = getTagDescriptions(entry[2], entry[7]);
             termMatches = tags.some(tag => tag.tag === tagFilter);
         } else {
@@ -104,10 +112,8 @@ app.get("/api/search", (req, res) => {
                 const [kanji, reading] = searchTerm.split(",");
                 termMatches = entry[0] === kanji && entry[1] === reading;
             } else if (mode === "en_exact") {
-                // Convert both search term and meanings to lowercase
                 termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
             } else if (mode === "en_any") {
-                // Convert both search term and meanings to lowercase
                 termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
             }
         }
