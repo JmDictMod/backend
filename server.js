@@ -126,8 +126,12 @@ app.get("/api/search", (req, res) => {
     
     if (tagOnlySearch) {
         if (!tagFilter) {
-            // Return the entire dictionaryData when query is just "#"
-            results = dictionaryData;
+            // Search for all tags and collect matching dictionary entries
+            const allTags = getAllTags().map(tag => tag.tag);
+            results = dictionaryData.filter(entry => {
+                const tags = getTagDescriptions(entry[2], entry[7]);
+                return tags.some(tag => allTags.includes(tag.tag));
+            });
         } else {
             // Filter by specific tag when tagFilter is provided (e.g., "#noun")
             results = dictionaryData.filter(entry => {
