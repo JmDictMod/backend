@@ -74,48 +74,6 @@ function getTagDescriptions(posRaw, extraRaw) {
     });
     return tags;
 }
-
-
-
-const visitorsFile = path.join(process.cwd(), "visitors.json");
-
-// Load previous visitor data
-let visitors = new Set();
-if (fs.existsSync(visitorsFile)) {
-    visitors = new Set(JSON.parse(fs.readFileSync(visitorsFile)));
-}
-
-// Track active users (Session-based)
-let activeUsers = new Set();
-const sessionTimeout = 5 * 60 * 1000; // 5 minutes timeout
-
-// Function to remove inactive users
-const cleanActiveUsers = () => {
-    const now = Date.now();
-    activeUsers.forEach((timestamp, ip) => {
-        if (now - timestamp > sessionTimeout) {
-            activeUsers.delete(ip);
-        }
-    });
-};
-
-// Track unique visitors
-app.get("/api/visitors", (req, res) => {
-    const clientIP = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    visitors.add(clientIP);
-    fs.writeFileSync(visitorsFile, JSON.stringify([...visitors]));
-    res.json({ totalVisitors: visitors.size });
-});
-
-// Track active users
-app.get("/api/active-users", (req, res) => {
-    const clientIP = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    activeUsers.add(clientIP, Date.now());
-    cleanActiveUsers(); // Remove inactive users
-    res.json({ activeUsers: activeUsers.size });
-});
-
-
 // API endpoint: Search dictionary with furigana support
 app.get("/api/search", (req, res) => {
     const { query, mode } = req.query;
