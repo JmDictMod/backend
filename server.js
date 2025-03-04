@@ -104,9 +104,11 @@ app.get("/api/search", (req, res) => {
                 const [kanji, reading] = searchTerm.split(",");
                 termMatches = entry[0] === kanji && entry[1] === reading;
             } else if (mode === "en_exact") {
-                termMatches = meanings.some(meaning => meaning === searchTerm);
+                // Convert both search term and meanings to lowercase
+                termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
             } else if (mode === "en_any") {
-                termMatches = meanings.some(meaning => meaning.includes(searchTerm));
+                // Convert both search term and meanings to lowercase
+                termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
             }
         }
         if (!tagOnlySearch && tagFilter) {
