@@ -5,10 +5,14 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 app.use(express.json()); // Allow JSON requests
+
 // Store loaded data
 let dictionaryData = [];
 let tagData = {};
 let furiganaData = {};
+// Cache for query results
+const queryCache = new Map();
+
 // Function to load JSON files safely
 function loadJSON(filePath) {
     try {
@@ -19,11 +23,12 @@ function loadJSON(filePath) {
         return null;
     }
 }
+
 // Load all JSON data
 function loadData() {
     console.log("Loading JMdict data...");
-    // Get correct path for Vercel (use process.cwd())
     const dataPath = path.join(process.cwd(), "data");
+    
     // Load Part-of-Speech (POS) and extra tags
     const tagJson = loadJSON(path.join(dataPath, "tag_bank_1.json"));
     if (tagJson) {
@@ -31,6 +36,7 @@ function loadData() {
             tagData[tag[0]] = tag[3]; // Store tag descriptions
         });
     }
+    
     // Load furigana dictionary
     const furiganaJson = loadJSON(path.join(dataPath, "furigana.json"));
     if (furiganaJson) {
@@ -41,7 +47,8 @@ function loadData() {
             furiganaData[entry.text].push(entry);
         });
     }
-    // Load dictionary data (term_bank_1.json to term_bank_29.json)
+    
+    // Load dictionary data
     for (let i = 1; i <= 29; i++) {
         const filePath = path.join(dataPath, `term_bank_${i}.json`);
         const termData = loadJSON(filePath);
@@ -51,8 +58,10 @@ function loadData() {
     }
     console.log("All data loaded successfully!");
 }
+
 // Initialize data on startup
 loadData();
+
 // Function to find furigana entry for a term + reading
 function findFurigana(term, reading) {
     if (furiganaData[term]) {
@@ -61,6 +70,7 @@ function findFurigana(term, reading) {
     }
     return null;
 }
+
 // Function to extract and map tags
 function getTagDescriptions(posRaw, extraRaw) {
     const tags = [];
@@ -74,19 +84,35 @@ function getTagDescriptions(posRaw, extraRaw) {
     });
     return tags;
 }
-// API endpoint: Search dictionary with furigana support
+
+// Function to get all valid tags from tagData
+function getAllTags() {
+    return Object.keys(tagData).map(tag => ({
+        tag,
+        description: tagData[tag]
+    }));
+}
+
+// API endpoint: Search dictionary with furigana support and caching
 app.get("/api/search", (req, res) => {
     const { query, mode } = req.query;
     if (!query) return res.status(400).json({ error: "Query parameter is required" });
+
+    // Create a unique cache key based on query and mode
+    const cacheKey = `${query}_${mode || 'default'}`;
+    if (queryCache.has(cacheKey)) {
+        console.log(`Cache hit for: ${cacheKey}`);
+        return res.json(queryCache.get(cacheKey));
+    }
+
     let searchTerm = query;
     let tagFilter = null;
     let tagOnlySearch = false;
-    // Trim the query to handle leading/trailing spaces
+    
     const trimmedQuery = query.trim();
-    // Check if query is just "#" or has "#  " with spaces
     if (trimmedQuery === "#" || trimmedQuery.startsWith("# ") || trimmedQuery.startsWith("#  ")) {
         tagOnlySearch = true;
-        tagFilter = trimmedQuery.substring(1).trim() || null;  // If just "#", tagFilter will be null
+        tagFilter = trimmedQuery.substring(1).trim() || null;
     } else if (trimmedQuery.startsWith("#")) {
         tagFilter = trimmedQuery.substring(1).trim();
         tagOnlySearch = true;
@@ -95,57 +121,88 @@ app.get("/api/search", (req, res) => {
         searchTerm = parts[0].trim();
         tagFilter = parts[1].trim();
     }
-    let results = dictionaryData.filter(entry => {
-        let termMatches = false;
-        let meanings = entry[5] || [];
-        if (tagOnlySearch) {
-            // If tagFilter is null (from just "#"), return all entries
-            if (!tagFilter) return true;
-            const tags = getTagDescriptions(entry[2], entry[7]);
-            termMatches = tags.some(tag => tag.tag === tagFilter);
-        } else {
-            if (mode === "exact") {
-                termMatches = entry[0] === searchTerm || entry[1] === searchTerm;
-            } else if (mode === "any") {
-                termMatches = entry[0].includes(searchTerm) || entry[1].includes(searchTerm);
-            } else if (mode === "both") {
-                const [kanji, reading] = searchTerm.split(",");
-                termMatches = entry[0] === kanji && entry[1] === reading;
-            } else if (mode === "en_exact") {
-                termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
-            } else if (mode === "en_any") {
-                termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    let results = [];
+    
+    if (tagOnlySearch && !tagFilter) {
+        // Return all available tags from tag_bank when query is just "#"
+        results = getAllTags().map(tag => ({
+            term: tag.tag,
+            reading: "",
+            meanings: [tag.description],
+            furigana: null,
+            tags: [tag]
+        }));
+    } else {
+        results = dictionaryData.filter(entry => {
+            let termMatches = false;
+            let meanings = entry[5] || [];
+            
+            if (tagOnlySearch) {
+                if (!tagFilter) return true;
+                const tags = getTagDescriptions(entry[2], entry[7]);
+                termMatches = tags.some(tag => tag.tag === tagFilter);
+            } else {
+                if (mode === "exact") {
+                    termMatches = entry[0] === searchTerm || entry[1] === searchTerm;
+                } else if (mode === "any") {
+                    termMatches = entry[0].includes(searchTerm) || entry[1].includes(searchTerm);
+                } else if (mode === "both") {
+                    const [kanji, reading] = searchTerm.split(",");
+                    termMatches = entry[0] === kanji && entry[1] === reading;
+                } else if (mode === "en_exact") {
+                    termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
+                } else if (mode === "en_any") {
+                    termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
+                }
             }
-        }
-        if (!tagOnlySearch && tagFilter) {
-            const tags = getTagDescriptions(entry[2], entry[7]);
-            return termMatches && tags.some(tag => tag.tag === tagFilter);
-        }
-        return termMatches;
-    });
+            
+            if (!tagOnlySearch && tagFilter) {
+                const tags = getTagDescriptions(entry[2], entry[7]);
+                return termMatches && tags.some(tag => tag.tag === tagFilter);
+            }
+            return termMatches;
+        });
+    }
+
     let groupedResults = {};
     results.forEach(entry => {
-        let termKey = `${entry[0]}_${entry[1]}`;
+        let termKey = tagOnlySearch && !tagFilter ? 
+            entry.term : 
+            `${entry.term || entry[0]}_${entry.reading || entry[1]}`;
+        
         if (!groupedResults[termKey]) {
-            const tags = getTagDescriptions(entry[2], entry[7]);
+            const tags = entry.tags || getTagDescriptions(entry[2], entry[7]);
             groupedResults[termKey] = {
-                term: entry[0],
-                reading: entry[1],
+                term: entry.term || entry[0],
+                reading: entry.reading || entry[1],
                 meanings: [],
-                furigana: findFurigana(entry[0], entry[1]),
+                furigana: entry.furigana || findFurigana(entry[0], entry[1]),
                 tags: tags
             };
         }
-        groupedResults[termKey].meanings.push(...entry[5]);
+        groupedResults[termKey].meanings.push(...(entry.meanings || entry[5] || []));
     });
-    res.json({
+
+    const response = {
         totalResults: Object.values(groupedResults).length,
         results: Object.values(groupedResults)
-    });
+    };
+
+    // Store in cache (limit cache size if needed)
+    if (queryCache.size > 1000) { // Optional: Clear cache if it grows too large
+        queryCache.clear();
+    }
+    queryCache.set(cacheKey, response);
+    console.log(`Cache miss - stored new result for: ${cacheKey}`);
+
+    res.json(response);
 });
-// Define an example API endpoint
+
+// Example API endpoint
 app.get("/api/test", (req, res) => {
     res.json({ message: "Server is working on Vercel!" });
 });
+
 // Export the app (Important for Vercel)
 module.exports = app;
