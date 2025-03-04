@@ -110,7 +110,7 @@ app.get("/api/search", (req, res) => {
     let tagOnlySearch = false;
     
     const trimmedQuery = query.trim();
-    if (trimmedQuery === "#" || trimmedQuery.startsWith("# ") || trimmedQuery.startsWith(" #")) {
+    if (trimmedQuery === "#" || trimmedQuery.startsWith("# ") || trimmedQuery.startsWith("#  ")) {
         tagOnlySearch = true;
         tagFilter = trimmedQuery.substring(1).trim() || null;
     } else if (trimmedQuery.startsWith("#")) {
@@ -129,7 +129,7 @@ app.get("/api/search", (req, res) => {
             // Return the entire dictionaryData when query is just "#"
             results = dictionaryData;
         } else {
-            // Filter by specific tag
+            // Filter by specific tag when tagFilter is provided (e.g., "#noun")
             results = dictionaryData.filter(entry => {
                 const tags = getTagDescriptions(entry[2], entry[7]);
                 return tags.some(tag => tag.tag === tagFilter);
@@ -161,6 +161,7 @@ app.get("/api/search", (req, res) => {
         });
     }
 
+    // Group results consistently for all cases
     let groupedResults = {};
     results.forEach(entry => {
         let termKey = `${entry[0]}_${entry[1]}`; // Use term and reading as key
