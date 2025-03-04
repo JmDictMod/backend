@@ -124,40 +124,43 @@ app.get("/api/search", (req, res) => {
 
     let results = [];
     
-    if (tagOnlySearch && !tagFilter) {
-        // Return all available tags from tag_bank when query is just "#"
-        results = getAllTags().map(tag => ({
-            term: tag.tag,
-            reading: "",
-            meanings: [tag.description],
-            furigana: null,
-            tags: [tag]
-        }));
+    if (tagOnlySearch) {
+        if (!tagFilter) {
+            // Iterate through all tags in tagData and collect results for each
+            const allTags = getAllTags();
+            allTags.forEach(tag => {
+                const tagResults = dictionaryData.filter(entry => {
+                    const tags = getTagDescriptions(entry[2], entry[7]);
+                    return tags.some(t => t.tag === tag.tag);
+                });
+                results = results.concat(tagResults);
+            });
+        } else {
+            // Filter by specific tag
+            results = dictionaryData.filter(entry => {
+                const tags = getTagDescriptions(entry[2], entry[7]);
+                return tags.some(tag => tag.tag === tagFilter);
+            });
+        }
     } else {
         results = dictionaryData.filter(entry => {
             let termMatches = false;
             let meanings = entry[5] || [];
             
-            if (tagOnlySearch) {
-                if (!tagFilter) return true;
-                const tags = getTagDescriptions(entry[2], entry[7]);
-                termMatches = tags.some(tag => tag.tag === tagFilter);
-            } else {
-                if (mode === "exact") {
-                    termMatches = entry[0] === searchTerm || entry[1] === searchTerm;
-                } else if (mode === "any") {
-                    termMatches = entry[0].includes(searchTerm) || entry[1].includes(searchTerm);
-                } else if (mode === "both") {
-                    const [kanji, reading] = searchTerm.split(",");
-                    termMatches = entry[0] === kanji && entry[1] === reading;
-                } else if (mode === "en_exact") {
-                    termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
-                } else if (mode === "en_any") {
-                    termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
-                }
+            if (mode === "exact") {
+                termMatches = entry[0] === searchTerm || entry[1] === searchTerm;
+            } else if (mode === "any") {
+                termMatches = entry[0].includes(searchTerm) || entry[1].includes(searchTerm);
+            } else if (mode === "both") {
+                const [kanji, reading] = searchTerm.split(",");
+                termMatches = entry[0] === kanji && entry[1] === reading;
+            } else if (mode === "en_exact") {
+                termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
+            } else if (mode === "en_any") {
+                termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
             }
             
-            if (!tagOnlySearch && tagFilter) {
+            if (tagFilter) {
                 const tags = getTagDescriptions(entry[2], entry[7]);
                 return termMatches && tags.some(tag => tag.tag === tagFilter);
             }
@@ -167,21 +170,19 @@ app.get("/api/search", (req, res) => {
 
     let groupedResults = {};
     results.forEach(entry => {
-        let termKey = tagOnlySearch && !tagFilter ? 
-            entry.term : 
-            `${entry.term || entry[0]}_${entry.reading || entry[1]}`;
+        let termKey = `${entry[0]}_${entry[1]}`; // Use term and reading as key
         
         if (!groupedResults[termKey]) {
-            const tags = entry.tags || getTagDescriptions(entry[2], entry[7]);
+            const tags = getTagDescriptions(entry[2], entry[7]);
             groupedResults[termKey] = {
-                term: entry.term || entry[0],
-                reading: entry.reading || entry[1],
+                term: entry[0],
+                reading: entry[1],
                 meanings: [],
-                furigana: entry.furigana || findFurigana(entry[0], entry[1]),
+                furigana: findFurigana(entry[0], entry[1]),
                 tags: tags
             };
         }
-        groupedResults[termKey].meanings.push(...(entry.meanings || entry[5] || []));
+        groupedResults[termKey].meanings.push(...(entry[5] || []));
     });
 
     const response = {
