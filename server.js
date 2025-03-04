@@ -5,10 +5,15 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 app.use(express.json()); // Allow JSON requests
+
 // Store loaded data
 let dictionaryData = [];
 let tagData = {};
 let furiganaData = {};
+
+// Cache setup
+const cache = new Map(); // Cache persists for the entire session
+
 // Function to load JSON files safely
 function loadJSON(filePath) {
     try {
@@ -19,19 +24,17 @@ function loadJSON(filePath) {
         return null;
     }
 }
+
 // Load all JSON data
 function loadData() {
     console.log("Loading JMdict data...");
-    // Get correct path for Vercel (use process.cwd())
     const dataPath = path.join(process.cwd(), "data");
-    // Load Part-of-Speech (POS) and extra tags
     const tagJson = loadJSON(path.join(dataPath, "tag_bank_1.json"));
     if (tagJson) {
         tagJson.forEach(tag => {
-            tagData[tag[0]] = tag[3]; // Store tag descriptions
+            tagData[tag[0]] = tag[3];
         });
     }
-    // Load furigana dictionary
     const furiganaJson = loadJSON(path.join(dataPath, "furigana.json"));
     if (furiganaJson) {
         furiganaJson.forEach(entry => {
@@ -41,7 +44,6 @@ function loadData() {
             furiganaData[entry.text].push(entry);
         });
     }
-    // Load dictionary data (term_bank_1.json to term_bank_29.json)
     for (let i = 1; i <= 29; i++) {
         const filePath = path.join(dataPath, `term_bank_${i}.json`);
         const termData = loadJSON(filePath);
@@ -51,8 +53,10 @@ function loadData() {
     }
     console.log("All data loaded successfully!");
 }
+
 // Initialize data on startup
 loadData();
+
 // Function to find furigana entry for a term + reading
 function findFurigana(term, reading) {
     if (furiganaData[term]) {
@@ -61,6 +65,7 @@ function findFurigana(term, reading) {
     }
     return null;
 }
+
 // Function to extract and map tags
 function getTagDescriptions(posRaw, extraRaw) {
     const tags = [];
@@ -74,10 +79,26 @@ function getTagDescriptions(posRaw, extraRaw) {
     });
     return tags;
 }
-// API endpoint: Search dictionary with furigana support
+
+// Function to generate cache key
+function getCacheKey(query, mode) {
+    return `${query}_${mode || 'default'}`;
+}
+
+// API endpoint: Search dictionary with furigana support and caching
 app.get("/api/search", (req, res) => {
     const { query, mode } = req.query;
     if (!query) return res.status(400).json({ error: "Query parameter is required" });
+
+    // Check cache first
+    const cacheKey = getCacheKey(query, mode);
+    const cachedResult = cache.get(cacheKey);
+    if (cachedResult) {
+        console.log(`Cache hit for: ${cacheKey}`);
+        return res.json(cachedResult);
+    }
+
+    // Process search
     let searchTerm = query;
     let tagFilter = null;
     let tagOnlySearch = false;
@@ -89,6 +110,7 @@ app.get("/api/search", (req, res) => {
         searchTerm = parts[0].trim();
         tagFilter = parts[1].trim();
     }
+
     let results = dictionaryData.filter(entry => {
         let termMatches = false;
         let meanings = entry[5] || [];
@@ -104,10 +126,8 @@ app.get("/api/search", (req, res) => {
                 const [kanji, reading] = searchTerm.split(",");
                 termMatches = entry[0] === kanji && entry[1] === reading;
             } else if (mode === "en_exact") {
-                // Convert both search term and meanings to lowercase
                 termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
             } else if (mode === "en_any") {
-                // Convert both search term and meanings to lowercase
                 termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
             }
         }
@@ -117,6 +137,7 @@ app.get("/api/search", (req, res) => {
         }
         return termMatches;
     });
+
     let groupedResults = {};
     results.forEach(entry => {
         let termKey = `${entry[0]}_${entry[1]}`;
@@ -132,14 +153,23 @@ app.get("/api/search", (req, res) => {
         }
         groupedResults[termKey].meanings.push(...entry[5]);
     });
-    res.json({
+
+    const response = {
         totalResults: Object.values(groupedResults).length,
         results: Object.values(groupedResults)
-    });
+    };
+
+    // Store in cache indefinitely
+    cache.set(cacheKey, response);
+    console.log(`Cache miss - stored result for: ${cacheKey}`);
+
+    res.json(response);
 });
+
 // Define an example API endpoint
 app.get("/api/test", (req, res) => {
     res.json({ message: "Server is working on Vercel!" });
 });
+
 // Export the app (Important for Vercel)
 module.exports = app;
