@@ -138,6 +138,8 @@ app.get("/api/search", (req, res) => {
         return termMatches;
     });
 
+    results.sort((a, b) => (b[4] || 0) - (a[4] || 0));
+
     let groupedResults = {};
     results.forEach(entry => {
         let termKey = `${entry[0]}_${entry[1]}`;
@@ -148,7 +150,8 @@ app.get("/api/search", (req, res) => {
                 reading: entry[1],
                 meanings: [],
                 furigana: findFurigana(entry[0], entry[1]),
-                tags: tags
+                tags: tags,
+                frequency: entry[4]
             };
         }
         groupedResults[termKey].meanings.push(...entry[5]);
