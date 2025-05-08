@@ -151,7 +151,7 @@ app.get("/api/search", (req, res) => {
                 meanings: [],
                 furigana: findFurigana(entry[0], entry[1]),
                 tags: tags,
-                frequency: entry[4]
+                frequency: entry[4] !== undefined ? String(entry[4]) : ""
             };
         }
         groupedResults[termKey].meanings.push(...entry[5]);
