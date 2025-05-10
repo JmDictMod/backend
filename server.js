@@ -9,7 +9,6 @@ app.use(express.json()); // Allow JSON requests
 // Store loaded data
 let dictionaryData = [];
 let tagData = {};
-let furiganaData = {};
 let tagIdMap = {}; // Mapping of tag names to tagbank.json IDs
 
 // Cache setup
@@ -31,79 +30,33 @@ function loadData() {
     console.log("Loading JMdict data...");
     const dataPath = path.join(process.cwd(), "data");
 
-    // Load tag_bank_1.json for tag descriptions
-    const tagJson = loadJSON(path.join(dataPath, "tag_bank_1.json"));
-    if (tagJson) {
-        tagJson.forEach(tag => {
-            tagData[tag[0]] = tag[3];
-        });
-    }
-
-    // Load tagbank.json for tag ID mapping
+    // Load tagbank.json for tag ID mapping and descriptions
     const tagBankJson = loadJSON(path.join(dataPath, "tagbank.json"));
     if (tagBankJson) {
         tagBankJson.forEach(tag => {
             tagIdMap[tag.tag] = tag.id;
+            tagData[tag.tag] = tag.description || tag.tag; // Use description if available
         });
     }
 
-    // Load furigana data
-    const furiganaJson = loadJSON(path.join(dataPath, "furigana.json"));
-    if (furiganaJson) {
-        furiganaJson.forEach(entry => {
-            if (!furiganaData[entry.text]) {
-                furiganaData[entry.text] = [];
-            }
-            furiganaData[entry.text].push(entry);
-        });
+    // Load jmdictmod.json
+    const jmdictModJson = loadJSON(path.join(dataPath, "jmdictmod.json"));
+    if (jmdictModJson) {
+        dictionaryData = jmdictModJson;
     }
 
-    // Load term data
-    for (let i = 1; i <= 29; i++) {
-        const filePath = path.join(dataPath, `term_bank_${i}.json`);
-        const termData = loadJSON(filePath);
-        if (termData) {
-            dictionaryData = dictionaryData.concat(termData);
-        }
-    }
     console.log("All data loaded successfully!");
 }
 
 // Initialize data on startup
 loadData();
 
-// Function to find furigana entry for a term + reading
-function findFurigana(term, reading) {
-    if (furiganaData[term]) {
-        const furiganaEntry = furiganaData[term].find(f => f.reading === reading);
-        return furiganaEntry ? furiganaEntry.furigana : null;
-    }
-    return null;
-}
-
-// Function to extract and map tags to IDs
-function getTagDescriptions(posRaw, extraRaw) {
-    const tagIds = [];
-    const posTags = posRaw ? posRaw.split(" ") : [];
-    const extraTags = extraRaw ? extraRaw.split(" ") : [];
-
-    // Collect tag IDs from posTags and extraTags
-    [...posTags, ...extraTags].forEach(tag => {
-        if (tagData[tag] && tagIdMap[tag]) {
-            tagIds.push(tagIdMap[tag]);
-        }
-    });
-
-    // Return comma-separated string of tag IDs
-    return tagIds.join(",");
-}
-
 // Function to generate cache key
 function getCacheKey(query, mode) {
     return `${query}_${mode || 'default'}`;
 }
 
-// API endpoint: Search dictionary with furigana support and caching
+// API endpoint: Search dictionary with integrated furigana support and caching
 app.get("/api/search", (req, res) => {
     const { query, mode } = req.query;
     if (!query) return res.status(400).json({ error: "Query parameter is required" });
@@ -147,22 +100,22 @@ app.get("/api/search", (req, res) => {
 
     let results = dictionaryData.filter(entry => {
         let termMatches = false;
-        let meanings = entry[5] || [];
+        let meanings = entry.meanings || [];
 
         // Handle frequency search
         if (frequencyFilter !== null) {
-            termMatches = entry[4] === frequencyFilter;
+            termMatches = parseInt(entry.frequency) === frequencyFilter;
         } else if (tagOnlySearch) {
-            const tags = getTagDescriptions(entry[2], entry[7]).split(",");
+            const tags = entry.tags.split(",");
             termMatches = tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
         } else {
             if (mode === "exact") {
-                termMatches = entry[0] === searchTerm || entry[1] === searchTerm;
+                termMatches = entry.term === searchTerm || entry.reading === searchTerm;
             } else if (mode === "any") {
-                termMatches = entry[0].includes(searchTerm) || entry[1].includes(searchTerm);
+                termMatches = entry.term.includes(searchTerm) || entry.reading.includes(searchTerm);
             } else if (mode === "both") {
                 const [kanji, reading] = searchTerm.split(",");
-                termMatches = entry[0] === kanji && entry[1] === reading;
+                termMatches = entry.term === kanji && entry.reading === reading;
             } else if (mode === "en_exact") {
                 termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
             } else if (mode === "en_any") {
@@ -171,22 +124,22 @@ app.get("/api/search", (req, res) => {
         }
 
         if (!tagOnlySearch && !frequencyFilter && tagFilter) {
-            const tags = getTagDescriptions(entry[2], entry[7]).split(",");
+            const tags = entry.tags.split(",");
             return termMatches && tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
         }
         return termMatches;
     });
 
-    results.sort((a, b) => (b[4] || 0) - (a[4] || 0));
+    results.sort((a, b) => (parseInt(b.frequency) || 0) - (parseInt(a.frequency) || 0));
 
     const formattedResults = results.map(entry => ({
-        term: entry[0],
-        reading: entry[1],
-        meanings: entry[5],
-        furigana: findFurigana(entry[0], entry[1]),
-        tags: getTagDescriptions(entry[2], entry[7]),
-        frequency: entry[4] !== undefined ? String(entry[4]) : "",
-        group: String(entry[6]) // Add group field with ID
+        term: entry.term,
+        reading: entry.reading,
+        meanings: entry.meanings,
+        furigana: entry.furigana,
+        tags: entry.tags,
+        frequency: entry.frequency,
+        group: entry.group
     }));
 
     const response = {
