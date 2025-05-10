@@ -100,22 +100,22 @@ app.get("/api/search", (req, res) => {
 
     let results = dictionaryData.filter(entry => {
         let termMatches = false;
-        let meanings = entry.meanings || [];
+        let meanings = entry.m || []; // Updated to use 'm' for meanings
 
         // Handle frequency search
         if (frequencyFilter !== null) {
-            termMatches = parseInt(entry.frequency) === frequencyFilter;
+            termMatches = parseInt(entry.o) === frequencyFilter; // Updated to use 'o' for frequency
         } else if (tagOnlySearch) {
-            const tags = entry.tags.split(",");
+            const tags = entry.l.split(","); // Updated to use 'l' for tags
             termMatches = tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
         } else {
             if (mode === "exact") {
-                termMatches = entry.term === searchTerm || entry.reading === searchTerm;
+                termMatches = entry.t === searchTerm || entry.r === searchTerm; // Updated to use 't' and 'r'
             } else if (mode === "any") {
-                termMatches = entry.term.includes(searchTerm) || entry.reading.includes(searchTerm);
+                termMatches = entry.t.includes(searchTerm) || entry.r.includes(searchTerm); // Updated to use 't' and 'r'
             } else if (mode === "both") {
                 const [kanji, reading] = searchTerm.split(",");
-                termMatches = entry.term === kanji && entry.reading === reading;
+                termMatches = entry.t === kanji && entry.r === reading; // Updated to use 't' and 'r'
             } else if (mode === "en_exact") {
                 termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
             } else if (mode === "en_any") {
@@ -124,22 +124,22 @@ app.get("/api/search", (req, res) => {
         }
 
         if (!tagOnlySearch && !frequencyFilter && tagFilter) {
-            const tags = entry.tags.split(",");
+            const tags = entry.l.split(","); // Updated to use 'l' for tags
             return termMatches && tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
         }
         return termMatches;
     });
 
-    results.sort((a, b) => (parseInt(b.frequency) || 0) - (parseInt(a.frequency) || 0));
+    results.sort((a, b) => (parseInt(b.o) || 0) - (parseInt(a.o) || 0)); // Updated to use 'o' for frequency
 
     const formattedResults = results.map(entry => ({
-        term: entry.term,
-        reading: entry.reading,
-        meanings: entry.meanings,
-        furigana: entry.furigana,
-        tags: entry.tags,
-        frequency: entry.frequency,
-        group: entry.group
+        t: entry.t, // Updated field names
+        r: entry.r,
+        m: entry.m,
+        f: entry.f,
+        l: entry.l,
+        o: entry.o,
+        g: entry.g
     }));
 
     const response = {
