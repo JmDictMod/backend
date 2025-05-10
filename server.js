@@ -179,26 +179,19 @@ app.get("/api/search", (req, res) => {
 
     results.sort((a, b) => (b[4] || 0) - (a[4] || 0));
 
-    let groupedResults = {};
-    results.forEach(entry => {
-        let termKey = `${entry[0]}_${entry[1]}`;
-        if (!groupedResults[termKey]) {
-            const tags = getTagDescriptions(entry[2], entry[7]);
-            groupedResults[termKey] = {
-                term: entry[0],
-                reading: entry[1],
-                meanings: [],
-                furigana: findFurigana(entry[0], entry[1]),
-                tags: tags,
-                frequency: entry[4] !== undefined ? String(entry[4]) : ""
-            };
-        }
-        groupedResults[termKey].meanings.push(...entry[5]);
-    });
+    const formattedResults = results.map(entry => ({
+        term: entry[0],
+        reading: entry[1],
+        meanings: entry[5],
+        furigana: findFurigana(entry[0], entry[1]),
+        tags: getTagDescriptions(entry[2], entry[7]),
+        frequency: entry[4] !== undefined ? String(entry[4]) : "",
+        group: String(entry[6]) // Add group field with ID
+    }));
 
     const response = {
-        totalResults: Object.values(groupedResults).length,
-        results: Object.values(groupedResults)
+        totalResults: formattedResults.length,
+        results: formattedResults
     };
 
     // Store in cache indefinitely
