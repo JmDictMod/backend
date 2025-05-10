@@ -10,6 +10,7 @@ app.use(express.json()); // Allow JSON requests
 let dictionaryData = [];
 let tagData = {};
 let furiganaData = {};
+let tagIdMap = {}; // Mapping of tag names to tagbank.json IDs
 
 // Cache setup
 const cache = new Map(); // Cache persists for the entire session
@@ -29,12 +30,24 @@ function loadJSON(filePath) {
 function loadData() {
     console.log("Loading JMdict data...");
     const dataPath = path.join(process.cwd(), "data");
+
+    // Load tag_bank_1.json for tag descriptions
     const tagJson = loadJSON(path.join(dataPath, "tag_bank_1.json"));
     if (tagJson) {
         tagJson.forEach(tag => {
             tagData[tag[0]] = tag[3];
         });
     }
+
+    // Load tagbank.json for tag ID mapping
+    const tagBankJson = loadJSON(path.join(dataPath, "tagbank.json"));
+    if (tagBankJson) {
+        tagBankJson.forEach(tag => {
+            tagIdMap[tag.tag] = tag.id;
+        });
+    }
+
+    // Load furigana data
     const furiganaJson = loadJSON(path.join(dataPath, "furigana.json"));
     if (furiganaJson) {
         furiganaJson.forEach(entry => {
@@ -44,6 +57,8 @@ function loadData() {
             furiganaData[entry.text].push(entry);
         });
     }
+
+    // Load term data
     for (let i = 1; i <= 29; i++) {
         const filePath = path.join(dataPath, `term_bank_${i}.json`);
         const termData = loadJSON(filePath);
@@ -66,18 +81,21 @@ function findFurigana(term, reading) {
     return null;
 }
 
-// Function to extract and map tags
+// Function to extract and map tags to IDs
 function getTagDescriptions(posRaw, extraRaw) {
-    const tags = [];
+    const tagIds = [];
     const posTags = posRaw ? posRaw.split(" ") : [];
     const extraTags = extraRaw ? extraRaw.split(" ") : [];
-    posTags.forEach(tag => {
-        if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
+
+    // Collect tag IDs from posTags and extraTags
+    [...posTags, ...extraTags].forEach(tag => {
+        if (tagData[tag] && tagIdMap[tag]) {
+            tagIds.push(tagIdMap[tag]);
+        }
     });
-    extraTags.forEach(tag => {
-        if (tagData[tag]) tags.push({ tag, description: tagData[tag] });
-    });
-    return tags;
+
+    // Return comma-separated string of tag IDs
+    return tagIds.join(",");
 }
 
 // Function to generate cache key
@@ -135,8 +153,8 @@ app.get("/api/search", (req, res) => {
         if (frequencyFilter !== null) {
             termMatches = entry[4] === frequencyFilter;
         } else if (tagOnlySearch) {
-            const tags = getTagDescriptions(entry[2], entry[7]);
-            termMatches = tags.some(tag => tag.tag === tagFilter);
+            const tags = getTagDescriptions(entry[2], entry[7]).split(",");
+            termMatches = tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
         } else {
             if (mode === "exact") {
                 termMatches = entry[0] === searchTerm || entry[1] === searchTerm;
@@ -153,8 +171,8 @@ app.get("/api/search", (req, res) => {
         }
 
         if (!tagOnlySearch && !frequencyFilter && tagFilter) {
-            const tags = getTagDescriptions(entry[2], entry[7]);
-            return termMatches && tags.some(tag => tag.tag === tagFilter);
+            const tags = getTagDescriptions(entry[2], entry[7]).split(",");
+            return termMatches && tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
         }
         return termMatches;
     });
