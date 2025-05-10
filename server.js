@@ -102,19 +102,39 @@ app.get("/api/search", (req, res) => {
     let searchTerm = query;
     let tagFilter = null;
     let tagOnlySearch = false;
-    if (query.startsWith("#")) {
+    let frequencyFilter = null;
+
+    // Handle frequency filter
+    if (query.startsWith("#frq")) {
+        frequencyFilter = parseInt(query.substring(4).trim());
+        if (isNaN(frequencyFilter)) {
+            return res.status(400).json({ error: "Invalid frequency value" });
+        }
+        tagOnlySearch = true;
+    } else if (query.startsWith("#")) {
         tagFilter = query.substring(1).trim();
         tagOnlySearch = true;
     } else if (query.includes(" #")) {
         const parts = query.split(" #");
         searchTerm = parts[0].trim();
-        tagFilter = parts[1].trim();
+        if (parts[1].startsWith("frq")) {
+            frequencyFilter = parseInt(parts[1].substring(3).trim());
+            if (isNaN(frequencyFilter)) {
+                return res.status(400).json({ error: "Invalid frequency value" });
+            }
+        } else {
+            tagFilter = parts[1].trim();
+        }
     }
 
     let results = dictionaryData.filter(entry => {
         let termMatches = false;
         let meanings = entry[5] || [];
-        if (tagOnlySearch) {
+
+        // Handle frequency search
+        if (frequencyFilter !== null) {
+            termMatches = entry[4] === frequencyFilter;
+        } else if (tagOnlySearch) {
             const tags = getTagDescriptions(entry[2], entry[7]);
             termMatches = tags.some(tag => tag.tag === tagFilter);
         } else {
@@ -131,7 +151,8 @@ app.get("/api/search", (req, res) => {
                 termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
             }
         }
-        if (!tagOnlySearch && tagFilter) {
+
+        if (!tagOnlySearch && !frequencyFilter && tagFilter) {
             const tags = getTagDescriptions(entry[2], entry[7]);
             return termMatches && tags.some(tag => tag.tag === tagFilter);
         }
