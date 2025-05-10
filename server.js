@@ -1,55 +1,59 @@
 const express = require("express");
-const fs = require("fs");
+const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 const cors = require("cors");
 const app = express();
 app.use(cors());
 app.use(express.json()); // Allow JSON requests
 
-// Store loaded data
-let dictionaryData = [];
+// Database setup
+const dbPath = path.join(process.cwd(), "data", "jmdictmod.db");
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
+    if (err) {
+        console.error("Error connecting to database:", err.message);
+    } else {
+        console.log("Connected to jmdictmod database");
+    }
+});
+
+// Store tag data
 let tagData = {};
-let tagIdMap = {}; // Mapping of tag names to tagbank.json IDs
+let tagIdMap = {};
 
 // Cache setup
 const cache = new Map(); // Cache persists for the entire session
 
-// Function to load JSON files safely
-function loadJSON(filePath) {
-    try {
-        const data = fs.readFileSync(filePath, "utf8");
-        return JSON.parse(data.replace(/^\uFEFF/, "")); // Remove BOM if present
-    } catch (error) {
-        console.warn(`Skipping file: ${filePath} - ${error.message}`);
-        return null;
-    }
-}
-
-// Load all JSON data
-function loadData() {
-    console.log("Loading JMdict data...");
-    const dataPath = path.join(process.cwd(), "data");
-
-    // Load tagbank.json for tag ID mapping and descriptions
-    const tagBankJson = loadJSON(path.join(dataPath, "tagbank.json"));
-    if (tagBankJson) {
-        tagBankJson.forEach(tag => {
-            tagIdMap[tag.tag] = tag.id;
-            tagData[tag.tag] = tag.description || tag.tag; // Use description if available
+// Load tag data from database
+async function loadTagData() {
+    console.log("Loading tag data...");
+    return new Promise((resolve, reject) => {
+        db.all("SELECT tag, id, description FROM tag", [], (err, rows) => {
+            if (err) {
+                console.warn(`Error loading tags: ${err.message}`);
+                reject(err);
+                return;
+            }
+            rows.forEach(tag => {
+                tagIdMap[tag.tag] = tag.id;
+                tagData[tag.tag] = tag.description || tag.tag;
+            });
+            console.log("Tag data loaded successfully!");
+            resolve();
         });
-    }
-
-    // Load jmdictmod.json
-    const jmdictModJson = loadJSON(path.join(dataPath, "jmdictmod.json"));
-    if (jmdictModJson) {
-        dictionaryData = jmdictModJson;
-    }
-
-    console.log("All data loaded successfully!");
+    });
 }
 
 // Initialize data on startup
-loadData();
+async function initialize() {
+    try {
+        await loadTagData();
+        console.log("All data loaded successfully!");
+    } catch (error) {
+        console.error("Error during initialization:", error.message);
+    }
+}
+
+initialize();
 
 // Function to generate cache key
 function getCacheKey(query, mode) {
@@ -57,7 +61,7 @@ function getCacheKey(query, mode) {
 }
 
 // API endpoint: Search dictionary with integrated furigana support and caching
-app.get("/api/search", (req, res) => {
+app.get("/api/search", async (req, res) => {
     const { query, mode } = req.query;
     if (!query) return res.status(400).json({ error: "Query parameter is required" });
 
@@ -98,65 +102,93 @@ app.get("/api/search", (req, res) => {
         }
     }
 
-    let results = dictionaryData.filter(entry => {
-        let termMatches = false;
-        let meanings = entry.m || []; // Updated to use 'm' for meanings
+    // Build SQL query
+    let sql = `SELECT t, r, m, f, o, g, l FROM vocab_dictionary WHERE `;
+    let params = [];
+    
+    if (frequencyFilter !== null) {
+        sql += `o = ?`;
+        params.push(frequencyFilter);
+    } else if (tagOnlySearch) {
+        if (!tagIdMap[tagFilter]) {
+            return res.json({ totalResults: 0, results: [] });
+        }
+        sql += `l LIKE ?`;
+        params.push(`%${tagIdMap[tagFilter]}%`);
+    } else {
+        if (mode === "exact") {
+            sql += `(t = ? OR r = ?)`;
+            params.push(searchTerm, searchTerm);
+        } else if (mode === "any") {
+            sql += `(t LIKE ? OR r LIKE ?)`;
+            params.push(`%${searchTerm}%`, `%${searchTerm}%`);
+        } else if (mode === "both") {
+            const [kanji, reading] = searchTerm.split(",");
+            sql += `t = ? AND r = ?`;
+            params.push(kanji, reading);
+        } else if (mode === "en_exact") {
+            sql += `json_extract(m, '$') LIKE ?`;
+            params.push(`%${searchTerm}%`);
+        } else if (mode === "en_any") {
+            sql += `json_extract(m, '$') LIKE ?`;
+            params.push(`%${searchTerm}%`);
+        }
 
-        // Handle frequency search
-        if (frequencyFilter !== null) {
-            termMatches = parseInt(entry.o) === frequencyFilter; // Updated to use 'o' for frequency
-        } else if (tagOnlySearch) {
-            const tags = entry.l.split(","); // Updated to use 'l' for tags
-            termMatches = tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
-        } else {
-            if (mode === "exact") {
-                termMatches = entry.t === searchTerm || entry.r === searchTerm; // Updated to use 't' and 'r'
-            } else if (mode === "any") {
-                termMatches = entry.t.includes(searchTerm) || entry.r.includes(searchTerm); // Updated to use 't' and 'r'
-            } else if (mode === "both") {
-                const [kanji, reading] = searchTerm.split(",");
-                termMatches = entry.t === kanji && entry.r === reading; // Updated to use 't' and 'r'
-            } else if (mode === "en_exact") {
-                termMatches = meanings.some(meaning => meaning.toLowerCase() === searchTerm.toLowerCase());
-            } else if (mode === "en_any") {
-                termMatches = meanings.some(meaning => meaning.toLowerCase().includes(searchTerm.toLowerCase()));
+        if (tagFilter && !tagOnlySearch) {
+            if (!tagIdMap[tagFilter]) {
+                return res.json({ totalResults: 0, results: [] });
             }
+            sql += ` AND l LIKE ?`;
+            params.push(`%${tagIdMap[tagFilter]}%`);
+        }
+    }
+
+    sql += ` ORDER BY o DESC`;
+
+    // Execute query
+    db.all(sql, params, (err, rows) => {
+        if (err) {
+            console.error("Query error:", err.message);
+            return res.status(500).json({ error: "Database query error" });
         }
 
-        if (!tagOnlySearch && !frequencyFilter && tagFilter) {
-            const tags = entry.l.split(","); // Updated to use 'l' for tags
-            return termMatches && tags.some(tagId => tagIdMap[tagFilter] && tagId === String(tagIdMap[tagFilter]));
-        }
-        return termMatches;
+        const formattedResults = rows.map(row => ({
+            t: row.t,
+            r: row.r,
+            m: JSON.parse(row.m),
+            f: JSON.parse(row.f),
+            l: row.l,
+            o: row.o,
+            g: row.g
+        }));
+
+        const response = {
+            totalResults: formattedResults.length,
+            results: formattedResults
+        };
+
+        // Store in cache indefinitely
+        cache.set(cacheKey, response);
+        console.log(`Cache miss - stored result for: ${cacheKey}`);
+
+        res.json(response);
     });
-
-    results.sort((a, b) => (parseInt(b.o) || 0) - (parseInt(a.o) || 0)); // Updated to use 'o' for frequency
-
-    const formattedResults = results.map(entry => ({
-        t: entry.t, // Updated field names
-        r: entry.r,
-        m: entry.m,
-        f: entry.f,
-        l: entry.l,
-        o: entry.o,
-        g: entry.g
-    }));
-
-    const response = {
-        totalResults: formattedResults.length,
-        results: formattedResults
-    };
-
-    // Store in cache indefinitely
-    cache.set(cacheKey, response);
-    console.log(`Cache miss - stored result for: ${cacheKey}`);
-
-    res.json(response);
 });
 
 // Define an example API endpoint
 app.get("/api/test", (req, res) => {
     res.json({ message: "Server is working on Vercel!" });
+});
+
+// Close database connection on process termination
+process.on("SIGINT", () => {
+    db.close((err) => {
+        if (err) {
+            console.error("Error closing database:", err.message);
+        }
+        console.log("Database connection closed");
+        process.exit(0);
+    });
 });
 
 // Export the app (Important for Vercel)
