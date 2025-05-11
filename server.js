@@ -107,29 +107,32 @@ app.get("/api/search", async (req, res) => {
     let params = [];
     
     if (frequencyFilter !== null) {
+        // Uses idx_frequency
         sql += `o = ?`;
         params.push(frequencyFilter);
     } else if (tagOnlySearch) {
         if (!tagIdMap[tagFilter]) {
             return res.json({ totalResults: 0, results: [] });
         }
+        // Uses idx_tags (note: LIKE with leading % may not fully use index)
         sql += `l LIKE ?`;
         params.push(`%${tagIdMap[tagFilter]}%`);
     } else {
         if (mode === "exact") {
+            // Uses idx_term or idx_reading
             sql += `(t = ? OR r = ?)`;
             params.push(searchTerm, searchTerm);
         } else if (mode === "any") {
+            // Uses idx_term or idx_reading (note: LIKE with % may not fully use index)
             sql += `(t LIKE ? OR r LIKE ?)`;
             params.push(`%${searchTerm}%`, `%${searchTerm}%`);
         } else if (mode === "both") {
             const [kanji, reading] = searchTerm.split(",");
+            // Uses idx_term and idx_reading
             sql += `t = ? AND r = ?`;
             params.push(kanji, reading);
-        } else if (mode === "en_exact") {
-            sql += `json_extract(m, '$') LIKE ?`;
-            params.push(`%${searchTerm}%`);
-        } else if (mode === "en_any") {
+        } else if (mode === "en_exact" || mode === "en_any") {
+            // Uses idx_meaning (note: json_extract may limit index usage)
             sql += `json_extract(m, '$') LIKE ?`;
             params.push(`%${searchTerm}%`);
         }
@@ -138,11 +141,13 @@ app.get("/api/search", async (req, res) => {
             if (!tagIdMap[tagFilter]) {
                 return res.json({ totalResults: 0, results: [] });
             }
+            // Uses idx_tags
             sql += ` AND l LIKE ?`;
             params.push(`%${tagIdMap[tagFilter]}%`);
         }
     }
 
+    // Uses idx_frequency for sorting
     sql += ` ORDER BY o DESC`;
 
     // Execute query
