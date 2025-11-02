@@ -5,7 +5,6 @@ const cors = require("cors");
 const app = express();
 app.use(cors());
 app.use(express.json()); // Allow JSON requests
-
 // Database setup
 const dbPath = path.join(process.cwd(), "data", "jmdictmod.db");
 const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
@@ -15,14 +14,11 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
         console.log("Connected to jmdictmod database");
     }
 });
-
 // Store tag data
 let tagData = {};
 let tagIdMap = {};
-
 // Cache setup
 const cache = new Map(); // Cache persists for the entire session
-
 // Load tag data from database
 async function loadTagData() {
     console.log("Loading tag data...");
@@ -42,7 +38,6 @@ async function loadTagData() {
         });
     });
 }
-
 // Initialize data on startup
 async function initialize() {
     try {
@@ -52,19 +47,15 @@ async function initialize() {
         console.error("Error during initialization:", error.message);
     }
 }
-
 initialize();
-
 // Function to generate cache key
 function getCacheKey(query, mode) {
     return `${query}_${mode || 'default'}`;
 }
-
 // API endpoint: Search dictionary with integrated furigana support and caching
 app.get("/api/search", async (req, res) => {
     const { query, mode } = req.query;
     if (!query) return res.status(400).json({ error: "Query parameter is required" });
-
     // Check cache first
     const cacheKey = getCacheKey(query, mode);
     const cachedResult = cache.get(cacheKey);
@@ -72,13 +63,11 @@ app.get("/api/search", async (req, res) => {
         console.log(`Cache hit for: ${cacheKey}`);
         return res.json(cachedResult);
     }
-
     // Process search
     let searchTerm = query;
     let tagFilter = null;
     let tagOnlySearch = false;
     let frequencyFilter = null;
-
     // Handle frequency filter
     if (query.startsWith("#frq")) {
         frequencyFilter = parseInt(query.substring(4).trim());
@@ -101,11 +90,9 @@ app.get("/api/search", async (req, res) => {
             tagFilter = parts[1].trim();
         }
     }
-
     // Build SQL query
     let sql = `SELECT t, r, m, f, o, g, l FROM vocab_dictionary WHERE `;
     let params = [];
-    
     if (frequencyFilter !== null) {
         // Uses idx_frequency
         sql += `o = ?`;
@@ -127,16 +114,15 @@ app.get("/api/search", async (req, res) => {
             sql += `(t LIKE ? OR r LIKE ?)`;
             params.push(`%${searchTerm}%`, `%${searchTerm}%`);
         } else if (mode === "both") {
-            const [kanji, reading] = searchTerm.split(",");
-            // Uses idx_term and idx_reading
-            sql += `t = ? AND r = ?`;
-            params.push(kanji, reading);
-        } else if (mode === "en_exact" || mode === "en_any") {
+    const [kanji, reading] = searchTerm.split(",").map(s => s.trim());
+    // NEW (correct): contains match
+    sql += `t LIKE ? AND r LIKE ?`;
+    params.push(`%${kanji}%`, `%${reading}%`);
+} else if (mode === "en_exact" || mode === "en_any") {
             // Uses idx_meaning (note: json_extract may limit index usage)
             sql += `json_extract(m, '$') LIKE ?`;
             params.push(`%${searchTerm}%`);
         }
-
         if (tagFilter && !tagOnlySearch) {
             if (!tagIdMap[tagFilter]) {
                 return res.json({ totalResults: 0, results: [] });
@@ -146,17 +132,14 @@ app.get("/api/search", async (req, res) => {
             params.push(`%${tagIdMap[tagFilter]}%`);
         }
     }
-
     // Uses idx_frequency for sorting
     sql += ` ORDER BY o DESC`;
-
     // Execute query
     db.all(sql, params, (err, rows) => {
         if (err) {
             console.error("Query error:", err.message);
             return res.status(500).json({ error: "Database query error" });
         }
-
         const formattedResults = rows.map(row => ({
             t: row.t,
             r: row.r,
@@ -166,25 +149,20 @@ app.get("/api/search", async (req, res) => {
             o: row.o,
             g: row.g
         }));
-
         const response = {
             totalResults: formattedResults.length,
             results: formattedResults
         };
-
         // Store in cache indefinitely
         cache.set(cacheKey, response);
         console.log(`Cache miss - stored result for: ${cacheKey}`);
-
         res.json(response);
     });
 });
-
 // Define an example API endpoint
 app.get("/api/test", (req, res) => {
     res.json({ message: "Server is working on Vercel!" });
 });
-
 // Close database connection on process termination
 process.on("SIGINT", () => {
     db.close((err) => {
@@ -195,6 +173,5 @@ process.on("SIGINT", () => {
         process.exit(0);
     });
 });
-
 // Export the app (Important for Vercel)
 module.exports = app;
